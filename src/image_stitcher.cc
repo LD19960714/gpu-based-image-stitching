@@ -169,3 +169,88 @@ void ImageStitcher::WarpImages(
             << 1. / double(tn - t0) * cv::getTickFrequency() << ")"
             << std::endl;
 }
+
+
+ void ImageStitcher::WarpImagesv2(const int& img_idx,
+                  const std::vector<cv::UMat>& image_vector,
+                  cv::UMat& image_concat_umat) {
+
+  std::cout << "[WarpImages] Warping images " << img_idx << " of " << num_img_ << "..." << std::endl;
+  int64_t t0, t1, t2, t3, t4, t5, t6, tn;
+  t0 = cv::getTickCount();
+ 
+
+//  remap(image_vector[img_idx],
+//        tmp_umat_vect_[img_idx],
+//        undist_xmap_vector_[img_idx],
+//        undist_ymap_vector_[img_idx],
+//        cv::INTER_LINEAR);
+  t1 = cv::getTickCount();
+
+  // Must use UMat.
+//  remap(tmp_umat_vect_[img_idx],
+//        tmp_umat_vect_[img_idx],
+//        reproj_xmap_vector_[img_idx],
+//        reproj_ymap_vector_[img_idx],
+//        cv::INTER_LINEAR);
+
+  // Combine two remap operator (For speed up a little)
+
+  std::cout << "[WarpImages] Remapping " << img_idx << ":" << num_img_ << " ..." << std::endl;
+  remap(image_vector[img_idx],
+        tmp_umat_vect_[img_idx],
+        final_xmap_vector_[img_idx],
+        final_ymap_vector_[img_idx],
+        cv::INTER_LINEAR);
+  std::cout << "[WarpImages] Remapped " << img_idx << ":" << num_img_ << " ..." << std::endl;
+
+  t2 = cv::getTickCount();
+  t3 = cv::getTickCount();
+
+
+  // Blend the edge of 2 images.
+//  warp_mutex_vector_[img_idx].lock();
+//  tmp_umat_vect_[img_idx].copyTo(wrap_vec_[img_idx]);
+//  warp_mutex_vector_[img_idx].unlock();
+
+  if (img_idx > 0) {
+    cv::UMat _r = tmp_umat_vect_[img_idx](cv::Rect(
+        roi_vect_[img_idx].x,
+        roi_vect_[img_idx].y,
+        weightMap_[0].cols,
+        weightMap_[0].rows));
+
+    warp_mutex_vector_[img_idx - 1].lock();
+    cv::UMat _l = tmp_umat_vect_[img_idx - 1](cv::Rect(
+        roi_vect_[img_idx - 1].x + roi_vect_[img_idx - 1].width,
+        roi_vect_[img_idx - 1].y,
+        weightMap_[0].cols,
+        weightMap_[0].rows));
+    warp_mutex_vector_[img_idx - 1].unlock();
+
+    cv::multiply(_r, weightMap_[0], _r, 1. / 255.);
+    cv::multiply(_l, weightMap_[1], _l, 1. / 255.);
+    cv::add(_r, _l, _r);
+  }
+
+  // Apply ROI.
+  int cols = 0;
+  for (size_t i = 0; i < img_idx; i++) {
+    cols += roi_vect_[i].width;
+  }
+
+  tmp_umat_vect_[img_idx](roi_vect_[img_idx]).copyTo(
+      image_concat_umat(cv::Rect(cols, 0, roi_vect_[img_idx].width, roi_vect_[img_idx].height))
+  );
+
+  tn = cv::getTickCount();
+  std::cout << "[WarpImages] Warped images " << img_idx << " of " << num_img_ << ". ("
+            << double(t1 - t0) / cv::getTickFrequency() << ";"
+            << double(t2 - t1) / cv::getTickFrequency() << ";"
+            << double(t3 - t2) / cv::getTickFrequency() << ";"
+            << 1. / double(tn - t0) * cv::getTickFrequency() << ")"
+            << std::endl;
+  
+    
+  
+  }

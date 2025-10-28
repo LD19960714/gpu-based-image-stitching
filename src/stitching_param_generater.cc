@@ -5,15 +5,58 @@
 
 #include <iostream>
 #include <fstream>
+#include <opencv2/imgcodecs.hpp>
 #include <string>
+#include <opencv2/xfeatures2d.hpp>
 
 #define ENABLE_LOG 0
 #define LOG(msg) std::cout << msg
 #define LOGLN(msg) std::cout << msg << std::endl
+#define debug
 
 using namespace std;
 using namespace cv;
 using namespace cv::detail;
+
+
+cv::detail::MatchesInfo makeMatchesInfo(
+    int idx1, int idx2,
+    const cv::detail::ImageFeatures& f1,
+    const cv::detail::ImageFeatures& f2,
+    const std::vector<cv::DMatch>& good_matches)
+{
+    cv::detail::MatchesInfo mi;
+    mi.src_img_idx = idx1;
+    mi.dst_img_idx = idx2;
+    mi.matches = good_matches;
+    mi.num_inliers = (int)good_matches.size();
+
+    if (good_matches.size() >= 4)
+    {
+        std::vector<cv::Point2f> pts1, pts2;
+        for (auto& m : good_matches)
+        {
+            pts1.push_back(f1.keypoints[m.queryIdx].pt);
+            pts2.push_back(f2.keypoints[m.trainIdx].pt);
+        }
+
+        cv::Mat inlier_mask;
+        mi.H = cv::findHomography(pts1, pts2, cv::RANSAC, 3.0, inlier_mask);
+        mi.num_inliers = cv::countNonZero(inlier_mask);
+        mi.inliers_mask.assign(inlier_mask.begin<uchar>(), inlier_mask.end<uchar>());
+        //mi.confidence = (double)mi.num_inliers / (double)pts1.size();
+        mi.confidence = std::min(1.0, (double)mi.num_inliers  / 50.0);
+
+    }
+    else
+    {
+        mi.H = cv::Mat::eye(3, 3, CV_64F);
+        mi.confidence = 0;
+    }
+
+    return mi;
+}
+
 
 StitchingParamGenerator::StitchingParamGenerator(
     const std::vector<cv::Mat>& image_vector) {
@@ -50,6 +93,12 @@ StitchingParamGenerator::StitchingParamGenerator(
               undist_ymap_vector_[img_idx],
               cv::INTER_LINEAR);
   }
+  #ifdef debug
+  for(int i = 0; i < image_vector_.size(); i++) {
+    cv::imwrite("../res/remap_"+std::to_string(i)+".jpg", image_vector_[i]);
+  }
+  #endif
+
 
   InitCameraParam();
   InitWarper();
@@ -67,18 +116,72 @@ void StitchingParamGenerator::InitCameraParam() {
     features[i].img_idx = i;
     LOGLN("Features in image #" << i + 1 << ": " << features[i].keypoints.size());
   }
+  
   LOGLN("Pairwise matching");
   std::vector<MatchesInfo> pairwise_matches;
-  Ptr<FeaturesMatcher> matcher;
-  if (matcher_type == "affine")
-    matcher = makePtr<AffineBestOf2NearestMatcher>(false, try_cuda, match_conf);
-  else if (range_width == -1)
-    matcher = makePtr<BestOf2NearestMatcher>(try_cuda, match_conf);
-  else
-    matcher = makePtr<BestOf2NearestRangeMatcher>(range_width, try_cuda,
-                                                  match_conf);
-  (*matcher)(features, pairwise_matches);
-  matcher->collectGarbage();
+  // Ptr<FeaturesMatcher> matcher;
+  // if (matcher_type == "affine")
+  //   matcher = makePtr<AffineBestOf2NearestMatcher>(false, try_cuda, match_conf);
+  // else if (range_width == -1)
+  //   matcher = makePtr<BestOf2NearestMatcher>(try_cuda, match_conf);
+  // else
+  //   matcher = makePtr<BestOf2NearestRangeMatcher>(range_width, try_cuda,
+  //                                                 match_conf);
+  // (*matcher)(features, pairwise_matches);
+  // matcher->collectGarbage();
+
+
+  // 1. 创建BFMatcher（SIFT 用 NORM_L2）
+  cv::BFMatcher matcher2(cv::NORM_L2, false);
+
+  // 2. knn匹配，k=2 用于ratio test
+  std::vector<std::vector<cv::DMatch>> knn_matches;
+  matcher2.knnMatch(features[0].descriptors, features[1].descriptors, knn_matches, 2);
+
+  // 3. Lowe’s ratio test
+  const float ratio_thresh = 0.75f;
+  std::vector<cv::DMatch> good_matches;
+
+  for (auto& m : knn_matches) {
+      if (m.size() == 2 && m[0].distance < ratio_thresh * m[1].distance) {
+          good_matches.push_back(m[0]);
+      }
+  }
+
+  // 4. 可选：根据距离再过滤一次
+  std::sort(good_matches.begin(), good_matches.end(),
+            [](const cv::DMatch& a, const cv::DMatch& b) { return a.distance < b.distance; });
+  if (good_matches.size() > 1000)  // 防止太多
+      good_matches.resize(1000);
+  
+  pairwise_matches.clear();
+  pairwise_matches.resize(4);
+
+  pairwise_matches[1] = makeMatchesInfo(0, 1, features[0], features[1], good_matches);
+
+// 5. 可视化
+// cv::Mat img_matches;
+// cv::drawMatches(img1, kp1, img2, kp2, good_matches, img_matches,
+//                 cv::Scalar::all(-1), cv::Scalar::all(-1),
+//                 std::vector<char>(), cv::DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS);
+// cv::imshow("BFMatcher Matches", img_matches);
+// cv::waitKey();
+
+  const MatchesInfo& m = pairwise_matches[1];
+  int idx1 = m.src_img_idx;
+  int idx2 = m.dst_img_idx;
+  cv::Mat img1 = image_vector_[idx1]; // 原图数组
+  cv::Mat img2 = image_vector_[idx2];
+
+  // 画匹配线
+  cv::Mat match_img;
+  cv::drawMatches(img1, features[idx1].keypoints,
+                  img2, features[idx2].keypoints,
+                  m.matches, match_img);
+
+  std::string winname = "../res/Matches_" + std::to_string(idx1) + "-" + std::to_string(idx2)+".jpg";
+  cv::imwrite(winname, match_img);
+   
 
   // Check if we should save matches graph
   if (save_graph) {

@@ -11,8 +11,9 @@
 class App {
 public:
   App();
-
+  App(int );
   [[noreturn]] void run_stitching();
+  void run_single_thread_stitch();
 
 private:
   SensorDataInterface sensor_data_interface_;

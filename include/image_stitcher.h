@@ -21,6 +21,9 @@ public:
                   std::vector<std::mutex>& image_mutex_vector,
                   std::vector<cv::UMat>& images_warped_with_roi_vector,
                   cv::UMat& image_concat_umat);
+  void WarpImagesv2(const int& img_idx,
+                  const std::vector<cv::UMat>& image_vector,
+                  cv::UMat& image_concat_umat);
 
 private:
   size_t num_img_;
