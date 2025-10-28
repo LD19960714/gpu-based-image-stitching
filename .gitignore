@@ -3,3 +3,6 @@
 .idea
 cmake-build*
 /results/*
+build/
+.vscode/
+.cache/

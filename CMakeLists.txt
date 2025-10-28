@@ -2,9 +2,11 @@
 cmake_minimum_required(VERSION 2.8)
 add_definitions(-std=c++11)
 project(image-stitching)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(cmake_c_flags_debug "-g -Wall")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}  -O0 -g -pthread -fopenmp -gdwarf-2 ")
 
-SET(OpenCV_DIR /usr/local/opencv-4.4/share/OpenCV)
+SET(OpenCV_DIR /home/ld/project/opencv/build)
 find_package(OpenCV 4 REQUIRED)
 
 include_directories(
