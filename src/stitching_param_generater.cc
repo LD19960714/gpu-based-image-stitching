@@ -6,8 +6,12 @@
 #include <iostream>
 #include <fstream>
 #include <opencv2/imgcodecs.hpp>
+#include <opencv2/opencv.hpp>
 #include <string>
 #include <opencv2/xfeatures2d.hpp>
+
+#include "super_glue.h"
+#include "super_point.h"
 
 #define ENABLE_LOG 0
 #define LOG(msg) std::cout << msg
@@ -84,15 +88,30 @@ StitchingParamGenerator::StitchingParamGenerator(
   std::vector<cv::UMat> undist_xmap_vector;
   std::vector<cv::UMat> undist_ymap_vector;
 
-  InitUndistortMap();
-
-  for (size_t img_idx = 0; img_idx < num_img_; ++img_idx) {
-    cv::remap(image_vector_[img_idx],
-              image_vector_[img_idx],
-              undist_xmap_vector_[img_idx],
-              undist_ymap_vector_[img_idx],
-              cv::INTER_LINEAR);
+  //InitUndistortMap();
+  undist_xmap_vector_ = std::vector<cv::UMat>(num_img_);
+  undist_ymap_vector_ = std::vector<cv::UMat>(num_img_);
+  for (size_t i = 0; i < num_img_; i++) {
+      cv::Size sz = image_vector_[i].size();
+      cv::Mat map_x(sz, CV_32FC1);
+      cv::Mat map_y(sz, CV_32FC1);
+      for (int y = 0; y < sz.height; y++) {
+          for (int x = 0; x < sz.width; x++) {
+              map_x.at<float>(y, x) = static_cast<float>(x);
+              map_y.at<float>(y, x) = static_cast<float>(y);
+          }
+      }
+      map_x.copyTo(undist_xmap_vector_[i]);
+      map_y.copyTo(undist_ymap_vector_[i]);
   }
+
+  // for (size_t img_idx = 0; img_idx < num_img_; ++img_idx) {
+  //   cv::remap(image_vector_[img_idx],
+  //             image_vector_[img_idx],
+  //             undist_xmap_vector_[img_idx],
+  //             undist_ymap_vector_[img_idx],
+  //             cv::INTER_LINEAR);
+  // }
   #ifdef debug
   for(int i = 0; i < image_vector_.size(); i++) {
     cv::imwrite("../res/remap_"+std::to_string(i)+".jpg", image_vector_[i]);
@@ -106,54 +125,149 @@ StitchingParamGenerator::StitchingParamGenerator(
   std::cout << "[StitchingParamGenerator] Initialized." << std::endl;
 }
 
-void StitchingParamGenerator::InitCameraParam() {
-  Ptr<Feature2D> finder;
-  finder = SIFT::create();
-  std::vector<ImageFeatures> features(num_img_);
-  std::vector<Size> full_img_sizes(num_img_);
-  for (int i = 0; i < num_img_; ++i) {
-    computeImageFeatures(finder, image_vector_[i], features[i]);
-    features[i].img_idx = i;
-    LOGLN("Features in image #" << i + 1 << ": " << features[i].keypoints.size());
-  }
-  
-  LOGLN("Pairwise matching");
-  std::vector<MatchesInfo> pairwise_matches;
-  // Ptr<FeaturesMatcher> matcher;
-  // if (matcher_type == "affine")
-  //   matcher = makePtr<AffineBestOf2NearestMatcher>(false, try_cuda, match_conf);
-  // else if (range_width == -1)
-  //   matcher = makePtr<BestOf2NearestMatcher>(try_cuda, match_conf);
-  // else
-  //   matcher = makePtr<BestOf2NearestRangeMatcher>(range_width, try_cuda,
-  //                                                 match_conf);
-  // (*matcher)(features, pairwise_matches);
-  // matcher->collectGarbage();
+  std::vector<ImageFeatures> makeFeatures(
+      const Eigen::Matrix<double, 259, Eigen::Dynamic>& featMat)
+  {
+      ImageFeatures feats;
+      int num_points = featMat.cols();
 
+      feats.keypoints.reserve(num_points);
+      feats.descriptors.create(num_points, 256, CV_32F); // 每个点256维
 
-  // 1. 创建BFMatcher（SIFT 用 NORM_L2）
-  cv::BFMatcher matcher2(cv::NORM_L2, false);
+      for (int i = 0; i < num_points; ++i)
+      {
+          float score = static_cast<float>(featMat(0, i));
+          float x = static_cast<float>(featMat(1, i));
+          float y = static_cast<float>(featMat(2, i));
 
-  // 2. knn匹配，k=2 用于ratio test
-  std::vector<std::vector<cv::DMatch>> knn_matches;
-  matcher2.knnMatch(features[0].descriptors, features[1].descriptors, knn_matches, 2);
-
-  // 3. Lowe’s ratio test
-  const float ratio_thresh = 0.75f;
-  std::vector<cv::DMatch> good_matches;
-
-  for (auto& m : knn_matches) {
-      if (m.size() == 2 && m[0].distance < ratio_thresh * m[1].distance) {
-          good_matches.push_back(m[0]);
+          // 添加关键点
+          feats.keypoints.emplace_back(cv::KeyPoint(x, y, 1.0f, -1, score));
       }
+      Eigen::MatrixXf descEigen = featMat.block(3, 0, featMat.rows() - 3, featMat.cols()).cast<float>();
+
+      cv::Mat descMat(descEigen.rows(), descEigen.cols(), CV_32F, (void*)descEigen.data());
+      descMat = descMat.t();
+      descMat = descMat.clone();  // Eigen 列主序转为行主序
+      descMat.copyTo(feats.descriptors);
+
+      return {feats};
   }
 
-  // 4. 可选：根据距离再过滤一次
-  std::sort(good_matches.begin(), good_matches.end(),
-            [](const cv::DMatch& a, const cv::DMatch& b) { return a.distance < b.distance; });
-  if (good_matches.size() > 1000)  // 防止太多
-      good_matches.resize(1000);
+void StitchingParamGenerator::InitCameraParam() {
+  // Ptr<Feature2D> finder;
+  // finder = SIFT::create();
+  std::vector<ImageFeatures> features(num_img_);
+  // std::vector<Size> full_img_sizes(num_img_);
+  // for (int i = 0; i < num_img_; ++i) {
+  //   computeImageFeatures(finder, image_vector_[i], features[i]);
+  //   features[i].img_idx = i;
+  //   LOGLN("Features in image #" << i + 1 << ": " << features[i].keypoints.size());
+  // }
   
+  // LOGLN("Pairwise matching");
+  std::vector<MatchesInfo> pairwise_matches;
+  // // Ptr<FeaturesMatcher> matcher;
+  // // if (matcher_type == "affine")
+  // //   matcher = makePtr<AffineBestOf2NearestMatcher>(false, try_cuda, match_conf);
+  // // else if (range_width == -1)
+  // //   matcher = makePtr<BestOf2NearestMatcher>(try_cuda, match_conf);
+  // // else
+  // //   matcher = makePtr<BestOf2NearestRangeMatcher>(range_width, try_cuda,
+  // //                                                 match_conf);
+  // // (*matcher)(features, pairwise_matches);
+  // // matcher->collectGarbage();
+
+
+  // // 1. 创建BFMatcher（SIFT 用 NORM_L2）
+  // cv::BFMatcher matcher2(cv::NORM_L2, false);
+
+  // // 2. knn匹配，k=2 用于ratio test
+  // std::vector<std::vector<cv::DMatch>> knn_matches;
+  // matcher2.knnMatch(features[0].descriptors, features[1].descriptors, knn_matches, 2);
+
+  // // 3. Lowe’s ratio test
+  // const float ratio_thresh = 0.75f;
+  // std::vector<cv::DMatch> good_matches;
+
+  // for (auto& m : knn_matches) {
+  //     if (m.size() == 2 && m[0].distance < ratio_thresh * m[1].distance) {
+  //         good_matches.push_back(m[0]);
+  //     }
+  // }
+
+  // // 4. 可选：根据距离再过滤一次
+  // std::sort(good_matches.begin(), good_matches.end(),
+  //           [](const cv::DMatch& a, const cv::DMatch& b) { return a.distance < b.distance; });
+  // if (good_matches.size() > 1000)  // 防止太多
+  //     good_matches.resize(1000);
+  
+
+  //使用superpoint
+
+  // read config from file
+  Configs configs("/home/ld/project/SuperPoint-SuperGlue-TensorRT/config/config.yaml", "/home/ld/project/SuperPoint-SuperGlue-TensorRT/weights/");
+  // image_vector_[0] = cv::imread("/home/ld/project/gpu-based-image-stitching/datasets/air-4cam-mp4/origin1.jpg",cv::IMREAD_GRAYSCALE);
+  // image_vector_[1] = cv::imread("/home/ld/project/gpu-based-image-stitching/datasets/air-4cam-mp4/origin2.jpg",cv::IMREAD_GRAYSCALE);
+  
+  // create superpoint detector and superglue matcher
+  auto superpoint = std::make_shared<SuperPoint>(configs.superpoint_config);
+  auto superglue = std::make_shared<SuperGlue>(configs.superglue_config);
+
+  // build engine
+  superpoint->build();
+  superglue->build();
+
+  // infer superpoint
+  Eigen::Matrix<double, 259, Eigen::Dynamic> feature_points0, feature_points1;
+  cv::Mat img1_gray,img2_gray;
+  cv::Mat resize_img1,resize_img2;
+  cv::Size size(320,240);
+  float x_scale = image_vector_[0].cols / (float) size.width;
+  float y_scale = image_vector_[0].rows / (float) size.height;
+  cv::cvtColor(image_vector_[0], img1_gray, cv::COLOR_BGR2GRAY);
+  cv::cvtColor(image_vector_[1], img2_gray, cv::COLOR_BGR2GRAY);
+
+  cv::resize(img1_gray, resize_img1, size);
+  cv::resize(img2_gray, resize_img2, size);
+
+
+  superpoint->infer(resize_img1, feature_points0);
+  superpoint->infer(resize_img2, feature_points1);
+
+  // infer superglue
+  std::vector<cv::DMatch> good_matches;
+  superglue->matching_points(feature_points0, feature_points1, good_matches);
+  
+  #ifdef debug
+  cv::Mat match_image;
+  std::vector<cv::KeyPoint> keypoints0, keypoints1;
+  for(size_t i = 0; i < feature_points0.cols(); ++i){
+    double score = feature_points0(0, i);
+    double x = feature_points0(1, i) * x_scale;
+    double y = feature_points0(2, i) * y_scale;
+    keypoints0.emplace_back(x, y, 8, -1, score);
+  }
+  for(size_t i = 0; i < feature_points1.cols(); ++i){
+    double score = feature_points1(0, i);
+    double x = feature_points1(1, i) * x_scale;
+    double y = feature_points1(2, i) * y_scale;
+    keypoints1.emplace_back(x, y, 8, -1, score);
+  }
+  cv::drawMatches(image_vector_[0], keypoints0, image_vector_[1], keypoints1, good_matches, match_image);
+  cv::imwrite("../res/superpoint.jpg",  match_image);
+  
+  #endif
+  features[0] = makeFeatures(feature_points0)[0];
+  features[1] = makeFeatures(feature_points1)[0];
+  
+  features[0].img_idx = 0;
+  features[1].img_idx = 1;
+
+  features[0].img_size = image_vector_[0].size();
+  features[1].img_size = image_vector_[1].size();
+
+
+
   pairwise_matches.clear();
   pairwise_matches.resize(4);
 

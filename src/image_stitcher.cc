@@ -220,13 +220,12 @@ void ImageStitcher::WarpImages(
         weightMap_[0].cols,
         weightMap_[0].rows));
 
-    warp_mutex_vector_[img_idx - 1].lock();
     cv::UMat _l = tmp_umat_vect_[img_idx - 1](cv::Rect(
         roi_vect_[img_idx - 1].x + roi_vect_[img_idx - 1].width,
         roi_vect_[img_idx - 1].y,
         weightMap_[0].cols,
         weightMap_[0].rows));
-    warp_mutex_vector_[img_idx - 1].unlock();
+    //warp_mutex_vector_[img_idx - 1].unlock();
 
     cv::multiply(_r, weightMap_[0], _r, 1. / 255.);
     cv::multiply(_l, weightMap_[1], _l, 1. / 255.);

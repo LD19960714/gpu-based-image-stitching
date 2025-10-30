@@ -6,6 +6,7 @@
 #include <mutex>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/imgcodecs.hpp>
+#include <opencv2/opencv.hpp>
 #include <string>
 #include <thread>
 #include <vector>
@@ -139,6 +140,7 @@ void App::run_single_thread_stitch()
         std::cout << "Failed to open capture " << i << std::endl;
       video_capture_vectors.emplace_back(capture);
       capture.read(frame);
+      //cv::resize(frame, frame, cv::Size(960,540));
       imgs[i] = frame.clone();
 
   }
@@ -193,7 +195,7 @@ void App::run_single_thread_stitch()
             flag = false;
             break;
         }else {
-
+          //cv::resize(frame, frame, cv::Size(960,540));
           umats[i] = frame;
 
         }
