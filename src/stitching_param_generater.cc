@@ -45,7 +45,7 @@ cv::detail::MatchesInfo makeMatchesInfo(
         }
 
         cv::Mat inlier_mask;
-        mi.H = cv::findHomography(pts1, pts2, cv::RANSAC, 3.0, inlier_mask);
+        mi.H = cv::findHomography(pts1, pts2, cv::RANSAC, 10.0, inlier_mask);
         mi.num_inliers = cv::countNonZero(inlier_mask);
         mi.inliers_mask.assign(inlier_mask.begin<uchar>(), inlier_mask.end<uchar>());
         //mi.confidence = (double)mi.num_inliers / (double)pts1.size();
@@ -88,30 +88,32 @@ StitchingParamGenerator::StitchingParamGenerator(
   std::vector<cv::UMat> undist_xmap_vector;
   std::vector<cv::UMat> undist_ymap_vector;
 
-  //InitUndistortMap();
   undist_xmap_vector_ = std::vector<cv::UMat>(num_img_);
   undist_ymap_vector_ = std::vector<cv::UMat>(num_img_);
-  for (size_t i = 0; i < num_img_; i++) {
-      cv::Size sz = image_vector_[i].size();
-      cv::Mat map_x(sz, CV_32FC1);
-      cv::Mat map_y(sz, CV_32FC1);
-      for (int y = 0; y < sz.height; y++) {
-          for (int x = 0; x < sz.width; x++) {
-              map_x.at<float>(y, x) = static_cast<float>(x);
-              map_y.at<float>(y, x) = static_cast<float>(y);
-          }
-      }
-      map_x.copyTo(undist_xmap_vector_[i]);
-      map_y.copyTo(undist_ymap_vector_[i]);
-  }
+  
+  InitUndistortMap();
 
-  // for (size_t img_idx = 0; img_idx < num_img_; ++img_idx) {
-  //   cv::remap(image_vector_[img_idx],
-  //             image_vector_[img_idx],
-  //             undist_xmap_vector_[img_idx],
-  //             undist_ymap_vector_[img_idx],
-  //             cv::INTER_LINEAR);
+  // for (size_t i = 0; i < num_img_; i++) {
+  //     cv::Size sz = image_vector_[i].size();
+  //     cv::Mat map_x(sz, CV_32FC1);
+  //     cv::Mat map_y(sz, CV_32FC1);
+  //     for (int y = 0; y < sz.height; y++) {
+  //         for (int x = 0; x < sz.width; x++) {
+  //             map_x.at<float>(y, x) = static_cast<float>(x);
+  //             map_y.at<float>(y, x) = static_cast<float>(y);
+  //         }
+  //     }
+  //     map_x.copyTo(undist_xmap_vector_[i]);
+  //     map_y.copyTo(undist_ymap_vector_[i]);
   // }
+
+  for (size_t img_idx = 0; img_idx < num_img_; ++img_idx) {
+    cv::remap(image_vector_[img_idx],
+              image_vector_[img_idx],
+              undist_xmap_vector_[img_idx],
+              undist_ymap_vector_[img_idx],
+              cv::INTER_LINEAR);
+  }
   #ifdef debug
   for(int i = 0; i < image_vector_.size(); i++) {
     cv::imwrite("../res/remap_"+std::to_string(i)+".jpg", image_vector_[i]);
@@ -136,12 +138,12 @@ StitchingParamGenerator::StitchingParamGenerator(
 
       for (int i = 0; i < num_points; ++i)
       {
-          float score = static_cast<float>(featMat(0, i));
-          float x = static_cast<float>(featMat(1, i));
-          float y = static_cast<float>(featMat(2, i));
+          double score = static_cast<double>(featMat(0, i));
+          double x = static_cast<double>(featMat(1, i));
+          double y = static_cast<double>(featMat(2, i));
 
           // 添加关键点
-          feats.keypoints.emplace_back(cv::KeyPoint(x, y, 1.0f, -1, score));
+          feats.keypoints.emplace_back(cv::KeyPoint(x, y, 8, -1, score));
       }
       Eigen::MatrixXf descEigen = featMat.block(3, 0, featMat.rows() - 3, featMat.cols()).cast<float>();
 
@@ -221,7 +223,7 @@ void StitchingParamGenerator::InitCameraParam() {
   Eigen::Matrix<double, 259, Eigen::Dynamic> feature_points0, feature_points1;
   cv::Mat img1_gray,img2_gray;
   cv::Mat resize_img1,resize_img2;
-  cv::Size size(320,240);
+  cv::Size size(640,480);
   float x_scale = image_vector_[0].cols / (float) size.width;
   float y_scale = image_vector_[0].rows / (float) size.height;
   cv::cvtColor(image_vector_[0], img1_gray, cv::COLOR_BGR2GRAY);
@@ -243,15 +245,15 @@ void StitchingParamGenerator::InitCameraParam() {
   std::vector<cv::KeyPoint> keypoints0, keypoints1;
   for(size_t i = 0; i < feature_points0.cols(); ++i){
     double score = feature_points0(0, i);
-    double x = feature_points0(1, i) * x_scale;
-    double y = feature_points0(2, i) * y_scale;
-    keypoints0.emplace_back(x, y, 8, -1, score);
+    feature_points0(1, i)  = feature_points0(1, i) * x_scale;
+    feature_points0(2, i) = feature_points0(2, i) * y_scale;
+    keypoints0.emplace_back(feature_points0(1, i), feature_points0(2, i), 8, -1, score);
   }
   for(size_t i = 0; i < feature_points1.cols(); ++i){
     double score = feature_points1(0, i);
-    double x = feature_points1(1, i) * x_scale;
-    double y = feature_points1(2, i) * y_scale;
-    keypoints1.emplace_back(x, y, 8, -1, score);
+    feature_points1(1, i) = feature_points1(1, i) * x_scale;
+    feature_points1(2, i) = feature_points1(2, i) * y_scale;
+    keypoints1.emplace_back(feature_points0(1, i), feature_points0(2, i), 8, -1, score);
   }
   cv::drawMatches(image_vector_[0], keypoints0, image_vector_[1], keypoints1, good_matches, match_image);
   cv::imwrite("../res/superpoint.jpg",  match_image);
@@ -345,17 +347,17 @@ void StitchingParamGenerator::InitCameraParam() {
     assert(false);
   }
 
-  std::vector<Mat> rmats;
-  for (auto& i : camera_params_vector_)
-    rmats.push_back(i.R.clone());
-  waveCorrect(rmats, wave_correct);
-  for (size_t i = 0; i < camera_params_vector_.size(); ++i) {
-    camera_params_vector_[i].R = rmats[i];
-    LOGLN("Initial camera intrinsics #"
-              << i + 1 << ":\nK:\n"
-              << camera_params_vector_[i].K()
-              << "\nR:\n" << camera_params_vector_[i].R);
-  }
+  // std::vector<Mat> rmats;
+  // for (auto& i : camera_params_vector_)
+  //   rmats.push_back(i.R.clone());
+  // waveCorrect(rmats, wave_correct);
+  // for (size_t i = 0; i < camera_params_vector_.size(); ++i) {
+  //   camera_params_vector_[i].R = rmats[i];
+  //   LOGLN("Initial camera intrinsics #"
+  //             << i + 1 << ":\nK:\n"
+  //             << camera_params_vector_[i].K()
+  //             << "\nR:\n" << camera_params_vector_[i].R);
+  // }
 }
 
 void StitchingParamGenerator::InitWarper() {
