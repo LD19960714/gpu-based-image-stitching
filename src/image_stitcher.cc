@@ -61,6 +61,9 @@ void ImageStitcher::SetParams(
 void ImageStitcher::CreateWeightMap(const int& height, const int& width) {
   std::cout << "[CreateWeightMap] Creating weight map..." << std::endl;
 
+  // 清空旧的权重图（重新标定时需要）
+  weightMap_.clear();
+
   // TODO: Try CV_16F.
   cv::Mat _l = cv::Mat(height, width, CV_8UC3);
   cv::Mat _r = cv::Mat(height, width, CV_8UC3);
@@ -84,7 +87,8 @@ void ImageStitcher::CreateWeightMap(const int& height, const int& width) {
   cv::imwrite("../results/_weight_map_l.png", weightMap_[0]);
   cv::imwrite("../results/_weight_map_r.png", weightMap_[1]);
 
-  std::cout << "[CreateWeightMap] Creating weight map... Done." << std::endl;
+  std::cout << "[CreateWeightMap] Creating weight map... Done. Size: " 
+            << weightMap_[0].cols << "x" << weightMap_[0].rows << std::endl;
 }
 
 void ImageStitcher::WarpImages(
@@ -217,22 +221,35 @@ void ImageStitcher::WarpImages(
 //  warp_mutex_vector_[img_idx].unlock();
 
   if (img_idx > 0) {
-    cv::UMat _r = tmp_umat_vect_[img_idx](cv::Rect(
-        roi_vect_[img_idx].x,
-        roi_vect_[img_idx].y,
-        weightMap_[0].cols,
-        weightMap_[0].rows));
+    // 检查ROI是否越界
+    int r_x = roi_vect_[img_idx].x;
+    int r_y = roi_vect_[img_idx].y;
+    int l_x = roi_vect_[img_idx - 1].x + roi_vect_[img_idx - 1].width;
+    int l_y = roi_vect_[img_idx - 1].y;
+    int blend_width = weightMap_[0].cols;
+    int blend_height = weightMap_[0].rows;
+    
+    // 检查边界
+    if (r_x + blend_width <= tmp_umat_vect_[img_idx].cols &&
+        r_y + blend_height <= tmp_umat_vect_[img_idx].rows &&
+        l_x + blend_width <= tmp_umat_vect_[img_idx - 1].cols &&
+        l_y + blend_height <= tmp_umat_vect_[img_idx - 1].rows) {
+      
+      cv::UMat _r = tmp_umat_vect_[img_idx](cv::Rect(r_x, r_y, blend_width, blend_height));
+      cv::UMat _l = tmp_umat_vect_[img_idx - 1](cv::Rect(l_x, l_y, blend_width, blend_height));
 
-    cv::UMat _l = tmp_umat_vect_[img_idx - 1](cv::Rect(
-        roi_vect_[img_idx - 1].x + roi_vect_[img_idx - 1].width,
-        roi_vect_[img_idx - 1].y,
-        weightMap_[0].cols,
-        weightMap_[0].rows));
-    //warp_mutex_vector_[img_idx - 1].unlock();
-
-    cv::multiply(_r, weightMap_[0], _r, 1. / 255.);
-    cv::multiply(_l, weightMap_[1], _l, 1. / 255.);
-    cv::add(_r, _l, _r);
+      cv::multiply(_r, weightMap_[0], _r, 1. / 255.);
+      cv::multiply(_l, weightMap_[1], _l, 1. / 255.);
+      cv::add(_r, _l, _r);
+    } else {
+      std::cout << "[WarpImagesv2] 警告: ROI越界，跳过融合. "
+                << "img_idx=" << img_idx 
+                << ", r_roi=(" << r_x << "," << r_y << "," << blend_width << "," << blend_height << ")"
+                << ", tmp_size=" << tmp_umat_vect_[img_idx].cols << "x" << tmp_umat_vect_[img_idx].rows
+                << ", l_roi=(" << l_x << "," << l_y << "," << blend_width << "," << blend_height << ")"
+                << ", tmp_size=" << tmp_umat_vect_[img_idx-1].cols << "x" << tmp_umat_vect_[img_idx-1].rows
+                << std::endl;
+    }
   }
 
   // Apply ROI.
