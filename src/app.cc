@@ -296,6 +296,7 @@ void App::run_single_thread_stitch()
           image_roi_vect
       );
       
+      
       // 重新计算输出缓冲区大小
       total_cols_ = 0;
       for (size_t i = 0; i < video_file_name.size(); ++i) {
