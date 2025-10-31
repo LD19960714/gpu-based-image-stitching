@@ -7,6 +7,7 @@
 #include <fstream>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/opencv.hpp>
+#include <opencv2/stitching/detail/seam_finders.hpp>
 #include <string>
 #include <opencv2/xfeatures2d.hpp>
 
@@ -91,29 +92,36 @@ StitchingParamGenerator::StitchingParamGenerator(
   undist_xmap_vector_ = std::vector<cv::UMat>(num_img_);
   undist_ymap_vector_ = std::vector<cv::UMat>(num_img_);
   
-  InitUndistortMap();
+  //InitUndistortMap();
 
-  // for (size_t i = 0; i < num_img_; i++) {
-  //     cv::Size sz = image_vector_[i].size();
-  //     cv::Mat map_x(sz, CV_32FC1);
-  //     cv::Mat map_y(sz, CV_32FC1);
-  //     for (int y = 0; y < sz.height; y++) {
-  //         for (int x = 0; x < sz.width; x++) {
-  //             map_x.at<float>(y, x) = static_cast<float>(x);
-  //             map_y.at<float>(y, x) = static_cast<float>(y);
-  //         }
-  //     }
-  //     map_x.copyTo(undist_xmap_vector_[i]);
-  //     map_y.copyTo(undist_ymap_vector_[i]);
+
+  for (size_t i = 0; i < num_img_; i++) {
+    cv::Size sz = image_vector_[i].size();
+    
+    // 创建简单的恒等映射标记
+    cv::Mat map_x(sz, CV_32FC1);
+    cv::Mat map_y(sz, CV_32FC1);
+    
+    for (int y = 0; y < sz.height; y++) {
+        float* ptr_x = map_x.ptr<float>(y);
+        float* ptr_y = map_y.ptr<float>(y);
+        for (int x = 0; x < sz.width; x++) {
+            ptr_x[x] = static_cast<float>(x);
+            ptr_y[x] = static_cast<float>(y);
+        }
+    }
+    
+    map_x.copyTo(undist_xmap_vector_[i]);
+    map_y.copyTo(undist_ymap_vector_[i]);
+}
+
+  // for (size_t img_idx = 0; img_idx < num_img_; ++img_idx) {
+  //   cv::remap(image_vector_[img_idx],
+  //             image_vector_[img_idx],
+  //             undist_xmap_vector_[img_idx],
+  //             undist_ymap_vector_[img_idx],
+  //             cv::INTER_LINEAR);
   // }
-
-  for (size_t img_idx = 0; img_idx < num_img_; ++img_idx) {
-    cv::remap(image_vector_[img_idx],
-              image_vector_[img_idx],
-              undist_xmap_vector_[img_idx],
-              undist_ymap_vector_[img_idx],
-              cv::INTER_LINEAR);
-  }
   #ifdef debug
   for(int i = 0; i < image_vector_.size(); i++) {
     cv::imwrite("../res/remap_"+std::to_string(i)+".jpg", image_vector_[i]);
@@ -253,7 +261,7 @@ void StitchingParamGenerator::InitCameraParam() {
     double score = feature_points1(0, i);
     feature_points1(1, i) = feature_points1(1, i) * x_scale;
     feature_points1(2, i) = feature_points1(2, i) * y_scale;
-    keypoints1.emplace_back(feature_points0(1, i), feature_points0(2, i), 8, -1, score);
+    keypoints1.emplace_back(feature_points1(1, i), feature_points1(2, i), 8, -1, score);
   }
   cv::drawMatches(image_vector_[0], keypoints0, image_vector_[1], keypoints1, good_matches, match_image);
   cv::imwrite("../res/superpoint.jpg",  match_image);
@@ -347,17 +355,17 @@ void StitchingParamGenerator::InitCameraParam() {
     assert(false);
   }
 
-  // std::vector<Mat> rmats;
-  // for (auto& i : camera_params_vector_)
-  //   rmats.push_back(i.R.clone());
-  // waveCorrect(rmats, wave_correct);
-  // for (size_t i = 0; i < camera_params_vector_.size(); ++i) {
-  //   camera_params_vector_[i].R = rmats[i];
-  //   LOGLN("Initial camera intrinsics #"
-  //             << i + 1 << ":\nK:\n"
-  //             << camera_params_vector_[i].K()
-  //             << "\nR:\n" << camera_params_vector_[i].R);
-  // }
+  // Wave correction: 校正累积旋转误差，减少拼接重影
+  std::vector<Mat> rmats;
+  for (auto& i : camera_params_vector_)
+    rmats.push_back(i.R.clone());
+  waveCorrect(rmats, wave_correct);
+  for (size_t i = 0; i < camera_params_vector_.size(); ++i) {
+    camera_params_vector_[i].R = rmats[i];
+    LOGLN("Camera #" << i + 1 << " after wave correction:\nK:\n"
+              << camera_params_vector_[i].K()
+              << "\nR:\n" << camera_params_vector_[i].R);
+  }
 }
 
 void StitchingParamGenerator::InitWarper() {

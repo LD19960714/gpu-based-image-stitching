@@ -26,13 +26,13 @@ private:
   // Default command line args
   std::vector<cv::String> img_names;
   bool try_cuda = false;
-  float conf_thresh = 0.95f;
+  float conf_thresh = 0.85f;  // 降低以获得更多匹配点，提高鲁棒性
   float match_conf = 0.5f;
   std::string matcher_type = "homography";
   std::string estimator_type = "homography";
   //std::string estimator_type = "affine";
   //std::string ba_cost_func = "affine";
-  std::string ba_cost_func = "reproj";
+  std::string ba_cost_func = "ray";
   //std::string ba_cost_func = "no";
   std::string ba_refine_mask = "xxxxx";
   cv::detail::WaveCorrectKind wave_correct = cv::detail::WAVE_CORRECT_HORIZ;

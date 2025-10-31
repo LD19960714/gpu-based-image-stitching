@@ -209,6 +209,8 @@ void App::run_single_thread_stitch()
     }
     cv::Mat res;
     cv::resize(image_concat_umat_, res, cv::Size(1920, 540));
+    cv::imwrite("../res/res.jpg", res);
+    //exit(0);
     writer.write(res);
 
   }

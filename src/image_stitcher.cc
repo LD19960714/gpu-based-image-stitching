@@ -2,6 +2,8 @@
 
 #include "image_stitcher.h"
 
+#include <opencv2/imgcodecs.hpp>
+#include <string>
 #include <thread>
 #include <mutex>
 
@@ -202,6 +204,7 @@ void ImageStitcher::WarpImages(
         final_xmap_vector_[img_idx],
         final_ymap_vector_[img_idx],
         cv::INTER_LINEAR);
+  cv::imwrite("../res/warp_"+std::to_string(img_idx)+".jpg",  tmp_umat_vect_[img_idx]);
   std::cout << "[WarpImages] Remapped " << img_idx << ":" << num_img_ << " ..." << std::endl;
 
   t2 = cv::getTickCount();
